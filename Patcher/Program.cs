@@ -127,14 +127,29 @@ namespace ResourcePatcher
                                     select el;
                                 if (exists.Count() > 0)
                                 {
-                                    Console.WriteLine("- - A sprite called " + name + " already exists in this atlas.");
+                                    Console.WriteLine("- - This sprite already exists in this atlas.");
+                                    var e = exists.First<XElement>();
+                                    if ((int)(e.Attribute("width")) == image.Width && (int)(e.Attribute("height")) == image.Height)
+                                    {
+                                        Console.WriteLine("- - Same size, replacing sprite...");
+                                        g.SetClip(new Rectangle((int)(e.Attribute("x")), (int)(e.Attribute("y")), (int)(e.Attribute("width")), (int)(e.Attribute("height"))));
+                                        g.Clear(Color.Transparent);
+                                        g.ResetClip();
+                                        g.DrawImage(image, (int)(e.Attribute("x")), (int)(e.Attribute("y")));
+                                        Console.WriteLine("- - Replaced at (" + (int)(e.Attribute("x")) + ", " + (int)(e.Attribute("y")) + ").");
+                                        spritesPatched++;
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine("- - Different sizes. Not replacing!");
+                                    }
                                     continue;
                                 }
 
                                 Console.WriteLine("- - Looking for free space...");
                                 var node = atlas.findSpaceForTexture(image.Width,image.Height);
                                 if (node != null) {
-								    g.DrawImage(image, node.r.X, node.r.Y);
+                                    g.DrawImage(image, node.r.X, node.r.Y);
 								    xml.Add(new XElement("SubTexture",
 									    new XAttribute("name", name),
                                         new XAttribute("x", node.r.X),
@@ -145,7 +160,7 @@ namespace ResourcePatcher
                                     Console.WriteLine("- - Added at (" + node.r.X + ", " + node.r.Y + ").");
                                     spritesPatched++;
                                 } else {
-                                    Console.WriteLine("- - Couldn't find a spot for "+name+"!");
+                                    Console.WriteLine("- - Couldn't find a spot for this sprite!");
                                 }
 							}
                     baseImage.Save(originalFile + ".png");
@@ -156,9 +171,11 @@ namespace ResourcePatcher
 		}
 
 		public static int Main (string[] args)
-		{
+        {
+            if (args.Length == 0) return 0;
+
             PatchSprites();
-			return 0;
+            return 0;
 		}
 	}
 }
