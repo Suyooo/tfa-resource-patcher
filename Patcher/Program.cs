@@ -1,252 +1,157 @@
 ﻿using System;
 using System.Collections.Generic;
-using Mono.Cecil;
-using Mono.Cecil.Cil;
 using System.Linq;
 using System.IO;
 using System.Drawing;
 using System.Xml.Linq;
 
-namespace Patcher
+namespace ResourcePatcher
 {
-	public class PatchAttribute : Attribute {}
+    public class TextureNode
+    {
+        public Rectangle r;
+        public TextureNode(int x, int y, int w, int h)
+        {
+            r = new Rectangle(x, y, w, h);
+        }
+        public TextureNode(Rectangle r2)
+        {
+            r = r2;
+        }
+        public bool overlap(Rectangle other)
+        {
+            return r.IntersectsWith(other);
+        }
+    }
 
-	static class CecilExtensions
+    public class TextureAtlas
+    {
+        public List<TextureNode> nodes;
+        public int width;
+        public int height;
+        public TextureAtlas(int w, int h)
+        {
+            nodes = new List<TextureNode>();
+            width = w;
+            height = h;
+        }
+        public void addExistingTexture(int x, int y, int w, int h)
+        {
+            nodes.Add(new TextureNode(x, y, w, h));
+        }
+
+        public TextureNode findSpaceForTexture(int w, int h)
+        {
+            var checkInterval = 10;
+            var newTexture = new Rectangle(0, 0, w, h);
+            while (newTexture.Bottom < height)
+            {
+                while (newTexture.Right < width)
+                {
+                    var isFree = true;
+                    foreach (TextureNode n in nodes)
+                    {
+                        if (n.overlap(newTexture))
+                        {
+                            isFree = false;
+                            break;
+                        }
+                    }
+                    if (isFree)
+                    {
+                        var tn = new TextureNode(newTexture);
+                        nodes.Add(tn);
+                        return tn;
+                    }
+                    newTexture.Offset(checkInterval, 0);
+                }
+                newTexture.X = 0;
+                newTexture.Offset(0, checkInterval);
+            }
+            return null;
+        }
+    }
+
+    public class ResourcePatcher
 	{
-		public static IEnumerable<TypeDefinition> AllNestedTypes(this TypeDefinition type)
-		{
-			yield return type;
-			foreach (TypeDefinition nested in type.NestedTypes)
-				foreach (TypeDefinition moarNested in AllNestedTypes(nested))
-					yield return moarNested;
-		}
-
-		public static IEnumerable<TypeDefinition> AllNestedTypes(this ModuleDefinition module)
-		{
-			return module.Types.SelectMany(AllNestedTypes);
-		}
-
-		public static string Signature(this MethodReference method)
-		{
-			return string.Format("{0}({1})", method.Name, string.Join(", ", method.Parameters.Select(p => p.ParameterType)));
-		}
-	}
-
-	public class Patcher
-	{
-		/// <summary>
-		/// Marker method for calling the base implementation of a patched method
-		/// </summary>
-		public static void CallRealBase()
-		{
-		}
-
-		/// <summary>
-		/// Unseal, publicize, virtualize.
-		/// </summary>
-		static void MakeBaseImage()
-		{
-			var module = ModuleDefinition.ReadModule("Original/TowerFall.exe");
-			foreach (var type in module.AllNestedTypes()) {
-				if (!type.FullName.StartsWith("TowerFall.") && !type.FullName.StartsWith("Monocle")) {
-					continue;
-				}
-				if (type.Name.StartsWith("<>")) {
-					continue;
-				}
-				if (type.IsNested)
-					type.IsNestedPublic = true;
-				if (type.IsValueType) {
-					continue;
-				}
-
-				type.IsSealed = false;
-				foreach (var field in type.Fields)
-					field.IsPublic = true;
-				foreach (var method in type.Methods) {
-					method.IsPublic = true;
-					if (!method.IsConstructor && !method.IsStatic)
-						method.IsVirtual = true;
-				}
-			}
-			module.Write("BaseTowerFall.exe");
-		}
-
-		/// <summary>
-		/// Inline classes marked as [Patch], copying fields and replacing method implementations.
-		/// As you can probably guess from the code, this is wholly incomplete and will certainly break and have to be
-		/// extended in the future.
-		/// </summary>
-		public static void Patch(string modModulePath)
-		{
-			var baseModule = ModuleDefinition.ReadModule("TowerFall.exe");
-			var modModule = ModuleDefinition.ReadModule(modModulePath);
-
-			Func<TypeReference, bool> patchType = (type) => {
-				if (type.Scope == modModule) {
-					return type.Resolve().CustomAttributes.Any(attr => attr.AttributeType.FullName == "Patcher.PatchAttribute");
-				}
-				return false;
-			};
-
-			// baseModule won't recognize MemberReferences from modModule without Import(), so recursively translate them.
-			// Furthermore, we have to redirect any references to members in [Patch] classes.
-			Func<TypeReference, TypeReference> mapType = null;
-			mapType = (modType) => {
-				if (modType.IsGenericParameter) {
-					return modType;
-				}
-				if (modType.IsArray) {
-					var type = mapType(modType.GetElementType());
-					return new ArrayType(type);
-				}
-				if (patchType(modType))
-					modType = modType.Resolve().BaseType;
-				return baseModule.Import(modType);
-			};
-			Action<MethodReference, MethodReference> mapParams = (modMethod, method) => {
-				foreach (var param in modMethod.Parameters)
-					method.Parameters.Add(new ParameterDefinition(mapType(param.ParameterType)));
-			};
-			Func<MethodReference, MethodReference> mapMethod = (modMethod) => {
-				var method = new MethodReference(modMethod.Name, mapType(modMethod.ReturnType), mapType(modMethod.DeclaringType));
-				method.HasThis = modMethod.HasThis;
-				mapParams(modMethod, method);
-
-				var modInst = modMethod as GenericInstanceMethod;
-				if (modInst != null) {
-					method.CallingConvention = MethodCallingConvention.Generic;
-					var inst = new GenericInstanceMethod(method);
-					foreach (var arg in modInst.GenericArguments) {
-						inst.GenericArguments.Add(mapType(arg));
-					}
-					method = inst;
-				}
-				return method;
-			};
-			Func<MethodDefinition, string, MethodDefinition> cloneMethod = (modMethod, prefix) => {
-				var method = new MethodDefinition(prefix + modMethod.Name, modMethod.Attributes, mapType(modMethod.ReturnType));
-				mapParams(modMethod, method);
-				foreach (var modParam in modMethod.GenericParameters) {
-					var param = new GenericParameter(modParam.Position, GenericParameterType.Method, modModule);
-					method.GenericParameters.Add(param);
-				}
-				return method;
-			};
-
-			foreach (TypeDefinition modType in modModule.Types.SelectMany(CecilExtensions.AllNestedTypes))
-				if (patchType(modType)) {
-					var type = baseModule.AllNestedTypes().Single(t => t.FullName == modType.BaseType.FullName);
-
-					// copy over fields including their custom attributes
-					foreach (var field in modType.Fields)
-						if (field.DeclaringType == modType) {
-							var newField = new FieldDefinition(field.Name, field.Attributes, mapType(field.FieldType));
-							foreach (var attribute in field.CustomAttributes)
-								newField.CustomAttributes.Add(new CustomAttribute(mapMethod(attribute.Constructor), attribute.GetBlob()));
-							type.Fields.Add(newField);
-						}
-
-					// copy over or replace methods
-					foreach (var method in modType.Methods)
-						if (method.DeclaringType == modType) {
-							var original = type.Methods.SingleOrDefault(m => m.Signature() == method.Signature());
-							MethodDefinition savedMethod = null;
-							if (original == null)
-								type.Methods.Add(original = cloneMethod(method, ""));
-							else {
-								savedMethod = cloneMethod(method, "$original_");
-								savedMethod.Body = original.Body;
-								savedMethod.IsRuntimeSpecialName = false;
-								type.Methods.Add(savedMethod);
-							}
-							original.Body = method.Body;
-
-							// redirect any references in the body
-							var proc = method.Body.GetILProcessor();
-							var amendments = new List<Action>();
-							foreach (var instr in method.Body.Instructions) {
-								if (instr.Operand is MethodReference) {
-									var callee = (MethodReference)instr.Operand;
-									if (callee.Name == "CallRealBase") {
-										instr.OpCode = OpCodes.Call;
-										instr.Operand = type.BaseType.Resolve().Methods.Single(m => m.Name == method.Name);
-										amendments.Add(() => proc.InsertBefore(instr, proc.Create(OpCodes.Ldarg_0)));
-									} else {
-										callee = mapMethod((MethodReference)instr.Operand);
-										if (callee.FullName == original.FullName)
-											// replace base calls with ones to $original
-											instr.Operand = savedMethod;
-										else
-											instr.Operand = callee;
-									}
-								}
-								else if (instr.Operand is FieldReference) {
-									var field = (FieldReference)instr.Operand;
-									instr.Operand = new FieldReference(field.Name, mapType(field.FieldType), mapType(field.DeclaringType));
-								} else if (instr.Operand is TypeReference)
-									instr.Operand = mapType((TypeReference)instr.Operand);
-							}
-							foreach (var var in method.Body.Variables)
-								var.VariableType = mapType(var.VariableType);
-							foreach (var amendment in amendments) {
-								amendment();
-							}
-							method.Body = proc.Body;
-						}
-				}
-
-			baseModule.Write("TowerFall.exe");
-		}
-
 		/// <summary>
 		/// Insert new sprites into Atlas.
 		/// </summary>
-		public static void PatchResources()
+		public static void PatchSprites()
 		{
-			foreach (var atlasPath in Directory.EnumerateDirectories(Path.Combine("Content", "Atlas"))) {
-				var xml = XElement.Load(Path.Combine("Original", atlasPath + ".xml"));
+			foreach (var patchFile in Directory.EnumerateDirectories(Path.Combine("patchfiles", "sprites"))) {
+                var atlasName = new DirectoryInfo(patchFile).Name;
+                Console.WriteLine("Patching atlas \"" + atlasName + "\"...");
 
-				string[] files = Directory.GetFiles(atlasPath, "*.png", SearchOption.AllDirectories);
-				int x = 700;
+                var originalFile = Path.Combine("Content", "Atlas", atlasName);
+                File.Copy(originalFile + ".png", originalFile + "_o.png", true);
+                File.Copy(originalFile + ".xml", originalFile + "_o.xml", true);
+                Console.WriteLine("- Backups created.");
 
-				using (var baseImage = Bitmap.FromFile(Path.Combine("Original", atlasPath + ".png"))) {
+                var xml = XElement.Load(originalFile + "_o.xml");
+                string[] files = Directory.GetFiles(patchFile, "*.png", SearchOption.AllDirectories);
+
+                var spritesPatched = 0;
+                var spritesTotal = 0;
+
+                using (var baseImage = Bitmap.FromFile(originalFile + "_o.png"))
+                {
+                    Console.WriteLine("- Creating virtual atlas...");
+                    var atlas = new TextureAtlas(baseImage.Width, baseImage.Height);
+                    IEnumerable<XElement> textures =
+                                    from el in xml.Elements("SubTexture")
+                                    select el;
+                    foreach (XElement e in textures)
+                    {
+                        atlas.addExistingTexture((int)e.Attribute("x"), (int)e.Attribute("y"), (int)e.Attribute("width"), (int)e.Attribute("height"));
+                    }
+
 					using (var g = Graphics.FromImage(baseImage))
 						foreach (string file in files)
 							using (var image = Bitmap.FromFile(file)) {
-								string name = file.Substring(atlasPath.Length + 1).Replace(Path.DirectorySeparatorChar, '/');
-								name = name.Substring(0, name.Length - ".png".Length);
-								g.DrawImage(image, x, 1700);
-								xml.Add(new XElement("SubTexture",
-									new XAttribute("name", name),
-									new XAttribute("x", x),
-									new XAttribute("y", 1700),
-									new XAttribute("width", image.Width),
-									new XAttribute("height", image.Height)
-								));
-								x += image.Width;
+                                spritesTotal++;
+
+                                string name = file.Substring(patchFile.Length + 1).Replace(Path.DirectorySeparatorChar, '/');
+                                name = name.Substring(0, name.Length - ".png".Length);
+                                Console.WriteLine("- Adding new sprite \""+name+"\"...");
+
+                                IEnumerable<XElement> exists =
+                                    from el in xml.Elements("SubTexture")
+                                    where (string)el.Attribute("name") == name
+                                    select el;
+                                if (exists.Count() > 0)
+                                {
+                                    Console.WriteLine("- - A sprite called " + name + " already exists in this atlas.");
+                                    continue;
+                                }
+
+                                Console.WriteLine("- - Looking for free space...");
+                                var node = atlas.findSpaceForTexture(image.Width,image.Height);
+                                if (node != null) {
+								    g.DrawImage(image, node.r.X, node.r.Y);
+								    xml.Add(new XElement("SubTexture",
+									    new XAttribute("name", name),
+                                        new XAttribute("x", node.r.X),
+                                        new XAttribute("y", node.r.Y),
+									    new XAttribute("width", image.Width),
+									    new XAttribute("height", image.Height)
+                                    ));
+                                    Console.WriteLine("- - Added at (" + node.r.X + ", " + node.r.Y + ").");
+                                    spritesPatched++;
+                                } else {
+                                    Console.WriteLine("- - Couldn't find a spot for "+name+"!");
+                                }
 							}
-					baseImage.Save(atlasPath + ".png");
+                    baseImage.Save(originalFile + ".png");
 				}
-				xml.Save(atlasPath + ".xml");
+                xml.Save(originalFile + ".xml");
+                Console.WriteLine("- Patched "+spritesPatched+" out of "+spritesTotal+".");
 			}
 		}
 
 		public static int Main (string[] args)
 		{
-			if (args.Length == 0) {
-				Console.WriteLine("Usage: Patcher.exe makeBaseImage | patch <patch DLLs>*");
-				return -1;
-			}
-			if (args[0] == "makeBaseImage") {
-				MakeBaseImage();
-			} else if (args[0] == "patch") {
-				File.Copy("Original/TowerFall.exe", "TowerFall.exe", overwrite: true);
-				foreach (var modModulePath in args.Skip(1)) {
-					Patch(modModulePath);
-				}
-				PatchResources();
-			}
+            PatchSprites();
 			return 0;
 		}
 	}

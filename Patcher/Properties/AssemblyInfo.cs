@@ -4,12 +4,12 @@ using System.Runtime.CompilerServices;
 // Information about this assembly is defined by the following attributes.
 // Change them to the values specific to your project.
 
-[assembly: AssemblyTitle ("Patcher")]
-[assembly: AssemblyDescription ("")]
+[assembly: AssemblyTitle("TowerFall Ascension Resource Patcher")]
+[assembly: AssemblyDescription ("Patches texture atlases, XMLs... for TowerFall Ascension")]
 [assembly: AssemblyConfiguration ("")]
-[assembly: AssemblyCompany ("")]
+[assembly: AssemblyCompany ("suyo.be")]
 [assembly: AssemblyProduct ("")]
-[assembly: AssemblyCopyright ("Nobody")]
+[assembly: AssemblyCopyright ("")]
 [assembly: AssemblyTrademark ("")]
 [assembly: AssemblyCulture ("")]
 
