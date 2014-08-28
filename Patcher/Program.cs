@@ -1,4 +1,10 @@
-﻿using System;
+﻿/* ********************************************
+ * TOWERFALL ASCENSION RESOURCE PATCHER
+ *   Based on the Bartizan/TowerClimb project
+ *   by derKha: https://github.com/Kha/Bartizan
+ * *******************************************/
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
@@ -145,7 +151,7 @@ namespace ResourcePatcher
                     baseImage.Save(originalFile + ".png");
 				}
                 xml.Save(originalFile + ".xml");
-                Console.WriteLine("- Patched "+spritesPatched+" out of "+spritesTotal+".");
+                Console.WriteLine("- Patched "+spritesPatched+" out of "+spritesTotal+" sprites.");
 			}
 		}
 
