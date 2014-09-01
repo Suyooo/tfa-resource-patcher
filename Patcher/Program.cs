@@ -85,6 +85,8 @@ namespace ResourcePatcher
 		/// </summary>
 		public static void PatchSprites()
 		{
+            Console.Clear();
+            DrawTitle();
 			foreach (var patchFile in Directory.EnumerateDirectories(Path.Combine("patchfiles", "sprites"))) {
                 var atlasName = new DirectoryInfo(patchFile).Name;
                 Console.WriteLine("Patching atlas \"" + atlasName + "\"...");
@@ -168,14 +170,45 @@ namespace ResourcePatcher
                 xml.Save(originalFile + ".xml");
                 Console.WriteLine("- Patched "+spritesPatched+" out of "+spritesTotal+" sprites.");
 			}
+            Console.WriteLine("Done. Press any key.");
 		}
 
 		public static int Main (string[] args)
         {
-            if (args.Length == 0) return 0;
-
-            PatchSprites();
+            int selector = 0;
+            bool good = false;
+            while (selector != 2) {
+                Console.Clear();
+                DrawTitle();
+                Console.WriteLine("Choose an option. Enter a number and hit Enter:");
+                Console.WriteLine("  1) Patch texture atlases");
+                Console.WriteLine("  2) Exit");
+                Console.Write(":: ");
+                good = int.TryParse(Console.ReadLine(), out selector);
+                if (good)
+                {
+                    switch (selector)
+                    {
+                        case 1:
+                            PatchSprites();
+                            break;
+                        case 2:
+                            return 0;
+                        default:
+                            Console.WriteLine("Invalid choice. Press any key.");
+                            break;
+                    }
+                } else Console.WriteLine("Invalid choice. Press any key.");
+                Console.ReadKey();
+            }
             return 0;
 		}
+
+        private static void DrawTitle()
+        {
+            Console.WriteLine("+++ TOWERFALL ASCENSION RESOURCE PATCHER v0.2 +++");
+            Console.WriteLine("-------------------------------------------------");
+            Console.WriteLine("");
+        }
 	}
 }
