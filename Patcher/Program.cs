@@ -92,6 +92,12 @@ namespace ResourcePatcher
                 Console.WriteLine("Patching atlas \"" + atlasName + "\"...");
 
                 var originalFile = Path.Combine("Content", "Atlas", atlasName);
+                if (!File.Exists(originalFile + ".png") || !File.Exists(originalFile + ".xml"))
+                {
+                    Console.WriteLine("- This atlas does not exist!");
+                    continue;
+                }
+
                 var backupFile = Path.Combine("Original", "Content", "Atlas", atlasName);
                 CheckForBackupDirectory(2);
 
@@ -113,7 +119,8 @@ namespace ResourcePatcher
                 var bitmap = originalFile + ".png";
                 if (cleanInstall) bitmap = backupFile + ".png";
 
-                using (var baseImage = Bitmap.FromFile(bitmap))
+                var baseImage = Bitmap.FromFile(bitmap);
+                if (baseImage != null)
                 {
                     Console.WriteLine("- Creating virtual atlas...");
                     var atlas = new TextureAtlas(baseImage.Width, baseImage.Height);
@@ -125,14 +132,21 @@ namespace ResourcePatcher
                         atlas.addExistingTexture((int)e.Attribute("x"), (int)e.Attribute("y"), (int)e.Attribute("width"), (int)e.Attribute("height"));
                     }
 
-					using (var g = Graphics.FromImage(baseImage))
-						foreach (string file in files)
-							using (var image = Bitmap.FromFile(file)) {
+                    var w = baseImage.Width;
+                    var h = baseImage.Height;
+
+                    var g = Graphics.FromImage(baseImage);
+                    if (g != null)
+                    {
+                        foreach (string file in files)
+                            using (var image = Bitmap.FromFile(file))
+                            {
+                                var attempt = 1;
                                 spritesTotal++;
 
                                 string name = file.Substring(patchFile.Length + 1).Replace(Path.DirectorySeparatorChar, '/');
                                 name = name.Substring(0, name.Length - ".png".Length);
-                                Console.WriteLine("- Adding new sprite \""+name+"\"...");
+                                Console.WriteLine("- Adding new sprite \"" + name + "\"...");
 
                                 IEnumerable<XElement> exists =
                                     from el in xml.Elements("SubTexture")
@@ -159,27 +173,52 @@ namespace ResourcePatcher
                                     continue;
                                 }
 
-                                Console.WriteLine("- - Looking for free space...");
-                                var node = atlas.findSpaceForTexture(image.Width,image.Height);
-                                if (node != null) {
-                                    g.DrawImage(image, node.r.X, node.r.Y);
-								    xml.Add(new XElement("SubTexture",
-									    new XAttribute("name", name),
-                                        new XAttribute("x", node.r.X),
-                                        new XAttribute("y", node.r.Y),
-									    new XAttribute("width", image.Width),
-									    new XAttribute("height", image.Height)
-                                    ));
-                                    Console.WriteLine("- - Added at (" + node.r.X + ", " + node.r.Y + ").");
-                                    spritesPatched++;
-                                } else {
-                                    Console.WriteLine("- - Couldn't find a spot for this sprite!");
+                                while (attempt <= 3)
+                                {
+                                    attempt++;
+
+                                    Console.WriteLine("- - Looking for free space...");
+                                    var node = atlas.findSpaceForTexture(image.Width, image.Height);
+                                    if (node != null)
+                                    {
+                                        g.DrawImage(image, new Rectangle(node.r.X, node.r.Y, image.Width, image.Height));
+                                        xml.Add(new XElement("SubTexture",
+                                            new XAttribute("name", name),
+                                            new XAttribute("x", node.r.X),
+                                            new XAttribute("y", node.r.Y),
+                                            new XAttribute("width", image.Width),
+                                            new XAttribute("height", image.Height)
+                                        ));
+                                        Console.WriteLine("- - Added at (" + node.r.X + ", " + node.r.Y + ").");
+                                        spritesPatched++;
+                                        attempt = 5;
+                                        continue;
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine("- - Couldn't find a spot for this sprite!");
+                                        Console.WriteLine("- - Attempting to resize the atlas...");
+                                        h += image.Height;
+                                        var tempBaseImage = new Bitmap(w, h);
+                                        g.Dispose();
+                                        g = Graphics.FromImage(tempBaseImage);
+
+                                        g.DrawImage(baseImage, new Rectangle(0, 0, baseImage.Width, baseImage.Height));
+                                        baseImage.Dispose();
+                                        baseImage = tempBaseImage;
+                                        atlas.height = h;
+                                        g.Dispose();
+                                        g = Graphics.FromImage(baseImage);
+                                    }
                                 }
-							}
-                    baseImage.Save(originalFile + ".png");
-				}
-                xml.Save(originalFile + ".xml");
-                Console.WriteLine("- Patched "+spritesPatched+" out of "+spritesTotal+" sprites.");
+                            }
+                        baseImage.Save(originalFile + ".png");
+                        xml.Save(originalFile + ".xml");
+                        Console.WriteLine("- Patched " + spritesPatched + " out of " + spritesTotal + " sprites.");
+                        g.Dispose();
+                    } else Console.WriteLine("- There was a problem drawing to this atlas.");
+                    baseImage.Dispose();
+                } else Console.WriteLine("- There was a problem opening this atlas.");
 			}
             Console.WriteLine("Done. Press any key.");
 		}
@@ -202,6 +241,12 @@ namespace ResourcePatcher
                 }
 
                 var originalFile = Path.Combine("Content", "Atlas", xmlName);
+                if (!File.Exists(originalFile))
+                {
+                    Console.WriteLine("- This XML does not exist!");
+                    continue;
+                }
+
                 var backupFile = Path.Combine("Original", "Content", "Atlas", xmlName);
                 CheckForBackupDirectory(2);
 
@@ -252,7 +297,7 @@ namespace ResourcePatcher
         {
             int selector = 0;
             bool good = false;
-            while (selector != 2) {
+            while (selector != 5) {
                 Console.Clear();
                 DrawTitle();
                 Console.WriteLine("Choose an option. Enter a number and hit Enter:");
