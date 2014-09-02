@@ -83,7 +83,7 @@ namespace ResourcePatcher
 		/// <summary>
 		/// Insert new sprites into Atlas.
 		/// </summary>
-		public static void PatchSprites()
+		public static void PatchSprites(bool cleanInstall = false)
 		{
             Console.Clear();
             DrawTitle();
@@ -92,17 +92,28 @@ namespace ResourcePatcher
                 Console.WriteLine("Patching atlas \"" + atlasName + "\"...");
 
                 var originalFile = Path.Combine("Content", "Atlas", atlasName);
-                File.Copy(originalFile + ".png", originalFile + "_o.png", true);
-                File.Copy(originalFile + ".xml", originalFile + "_o.xml", true);
-                Console.WriteLine("- Backups created.");
+                var backupFile = Path.Combine("Original", "Content", "Atlas", atlasName);
+                CheckForBackupDirectory(2);
 
-                var xml = XElement.Load(originalFile + "_o.xml");
+                if (!File.Exists(backupFile + ".png"))
+                {
+                    Console.WriteLine("- Creating backups...");
+                    File.Copy(originalFile + ".png", backupFile + ".png");
+                    File.Copy(originalFile + ".xml", backupFile + ".xml");
+                }
+
+                var xmlfile = originalFile + ".xml";
+                if (cleanInstall) xmlfile = backupFile + ".xml";
+                var xml = XElement.Load(xmlfile);
+
                 string[] files = Directory.GetFiles(patchFile, "*.png", SearchOption.AllDirectories);
-
                 var spritesPatched = 0;
                 var spritesTotal = 0;
 
-                using (var baseImage = Bitmap.FromFile(originalFile + "_o.png"))
+                var bitmap = originalFile + ".png";
+                if (cleanInstall) bitmap = backupFile + ".png";
+
+                using (var baseImage = Bitmap.FromFile(bitmap))
                 {
                     Console.WriteLine("- Creating virtual atlas...");
                     var atlas = new TextureAtlas(baseImage.Width, baseImage.Height);
@@ -143,7 +154,7 @@ namespace ResourcePatcher
                                     }
                                     else
                                     {
-                                        Console.WriteLine("- - Different sizes. Not replacing!");
+                                        Console.WriteLine("- - Different sizes. Not replacing! Do a clean install!");
                                     }
                                     continue;
                                 }
@@ -172,6 +183,70 @@ namespace ResourcePatcher
 			}
             Console.WriteLine("Done. Press any key.");
 		}
+        /// <summary>
+        /// Insert new elements into XML files.
+        /// </summary>
+        public static void PatchXML(bool cleanInstall = false)
+        {
+            Console.Clear();
+            DrawTitle();
+            foreach (var patchFile in Directory.GetFiles(Path.Combine("patchfiles", "xml"), "*.xml", SearchOption.AllDirectories))
+            {
+                var xmlName = Path.GetFileName(patchFile);
+                Console.WriteLine("Patching XML \"" + xmlName + "\"...");
+
+                if (xmlName == "questTips.xml" || xmlName == "versusTips.xml")
+                {
+                    Console.WriteLine("- WARNING: The Tips XML files have no unique identifiers.");
+                    Console.WriteLine("-          This operation might create duplicates.");
+                }
+
+                var originalFile = Path.Combine("Content", "Atlas", xmlName);
+                var backupFile = Path.Combine("Original", "Content", "Atlas", xmlName);
+                CheckForBackupDirectory(2);
+
+                if (!File.Exists(backupFile))
+                {
+                    Console.WriteLine("- Creating backup...");
+                    File.Copy(originalFile, backupFile);
+                }
+
+                var xmlfile = originalFile;
+                if (cleanInstall) xmlfile = backupFile;
+                var xml = XElement.Load(xmlfile);
+                var patchxml = XElement.Load(patchFile);
+
+                foreach (var elem in patchxml.Elements())
+                {
+                    if (xmlName != "questTips.xml" && xmlName != "versusTips.xml")
+                    {
+                        IEnumerable<XElement> exists =
+                            from el in xml.Elements(elem.Name)
+                            where (string)el.Attribute("id") == (string)elem.Attribute("id")
+                            select el;
+                        if (exists.Count() > 0)
+                        {
+                            Console.WriteLine("- Overwriting element \"" + elem.Name + "\" > \"" + elem.Attribute("id").Value + "\".");
+                            exists.First().ReplaceWith(elem);
+                        }
+                        else
+                        {
+                            Console.WriteLine("- Adding element \"" + elem.Name + "\" > \"" + elem.Attribute("id").Value + "\".");
+                            xml.Add(elem);
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("- Adding a tip.");
+                        xml.Add(elem);
+                    }
+                }
+
+                xml.Save(originalFile);
+                Console.WriteLine("- Added " + patchxml.Elements().Count() + " XML elements.");
+            }
+            Console.WriteLine("Done. Press any key.");
+        }
 
 		public static int Main (string[] args)
         {
@@ -181,8 +256,11 @@ namespace ResourcePatcher
                 Console.Clear();
                 DrawTitle();
                 Console.WriteLine("Choose an option. Enter a number and hit Enter:");
-                Console.WriteLine("  1) Patch texture atlases");
-                Console.WriteLine("  2) Exit");
+                Console.WriteLine("  1) Add/replace new textures");
+                Console.WriteLine("  2) Reinstall all textures (clean install)");
+                Console.WriteLine("  3) Add/replace XML elements");
+                Console.WriteLine("  4) Reinstall XML elements (clean install)");
+                Console.WriteLine("  5) Exit");
                 Console.Write(":: ");
                 good = int.TryParse(Console.ReadLine(), out selector);
                 if (good)
@@ -193,6 +271,15 @@ namespace ResourcePatcher
                             PatchSprites();
                             break;
                         case 2:
+                            PatchSprites(true);
+                            break;
+                        case 3:
+                            PatchXML();
+                            break;
+                        case 4:
+                            PatchXML(true);
+                            break;
+                        case 5:
                             return 0;
                         default:
                             Console.WriteLine("Invalid choice. Press any key.");
@@ -209,6 +296,25 @@ namespace ResourcePatcher
             Console.WriteLine("+++ TOWERFALL ASCENSION RESOURCE PATCHER v0.2 +++");
             Console.WriteLine("-------------------------------------------------");
             Console.WriteLine("");
+        }
+
+        private static void CheckForBackupDirectory(int type)
+        {
+            var dir = "Original";
+            switch (type)
+            {
+                case 0:     // root backup folder
+                    break;
+                case 1:     // Content
+                    CheckForBackupDirectory(0);
+                    dir = Path.Combine(dir,"Content");
+                    break;
+                case 2:     // Content/Atlas
+                    CheckForBackupDirectory(1);
+                    dir = Path.Combine(dir,"Content","Atlas");
+                    break;
+            }
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
         }
 	}
 }
