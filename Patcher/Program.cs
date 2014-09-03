@@ -10,74 +10,11 @@ using System.Linq;
 using System.IO;
 using System.Drawing;
 using System.Xml.Linq;
+using System.Security.Cryptography;
+using System.Diagnostics;
 
 namespace ResourcePatcher
 {
-    public class TextureNode
-    {
-        public Rectangle r;
-        public TextureNode(int x, int y, int w, int h)
-        {
-            r = new Rectangle(x, y, w, h);
-        }
-        public TextureNode(Rectangle r2)
-        {
-            r = r2;
-        }
-        public bool overlap(Rectangle other)
-        {
-            return r.IntersectsWith(other);
-        }
-    }
-
-    public class TextureAtlas
-    {
-        public List<TextureNode> nodes;
-        public int width;
-        public int height;
-        public TextureAtlas(int w, int h)
-        {
-            nodes = new List<TextureNode>();
-            width = w;
-            height = h;
-        }
-        public void addExistingTexture(int x, int y, int w, int h)
-        {
-            nodes.Add(new TextureNode(x, y, w, h));
-        }
-
-        public TextureNode findSpaceForTexture(int w, int h)
-        {
-            var checkInterval = 10;
-            var newTexture = new Rectangle(0, 0, w, h);
-            while (newTexture.Bottom < height)
-            {
-                while (newTexture.Right < width)
-                {
-                    var isFree = true;
-                    foreach (TextureNode n in nodes)
-                    {
-                        if (n.overlap(newTexture))
-                        {
-                            isFree = false;
-                            break;
-                        }
-                    }
-                    if (isFree)
-                    {
-                        var tn = new TextureNode(newTexture);
-                        nodes.Add(tn);
-                        return tn;
-                    }
-                    newTexture.Offset(checkInterval, 0);
-                }
-                newTexture.X = 0;
-                newTexture.Offset(0, checkInterval);
-            }
-            return null;
-        }
-    }
-
     public class ResourcePatcher
 	{
 		/// <summary>
@@ -87,6 +24,12 @@ namespace ResourcePatcher
 		{
             Console.Clear();
             DrawTitle();
+            if (!Directory.Exists(Path.Combine("patchfiles", "sprites")))
+            {
+                Console.WriteLine("There's no texture atlases to be patched.");
+                return;
+            }
+
 			foreach (var patchFile in Directory.EnumerateDirectories(Path.Combine("patchfiles", "sprites"))) {
                 var atlasName = new DirectoryInfo(patchFile).Name;
                 Console.WriteLine("Patching atlas \"" + atlasName + "\"...");
@@ -100,6 +43,33 @@ namespace ResourcePatcher
 
                 var backupFile = Path.Combine("Original", "Content", "Atlas", atlasName);
                 CheckForBackupDirectory(2);
+
+                if (CheckForUpdate(originalFile + ".png") || CheckForUpdate(originalFile + ".xml"))
+                {
+                    Console.WriteLine("- The atlas has been modified outside of the patcher.");
+                    Console.WriteLine("- This usually means there was an update for TFA.");
+                    Console.WriteLine("- Reset the atlas and reinstall all sprites?");
+                    Console.WriteLine("- Not doing this might result in TFA crashing.");
+                    bool cont = false;
+                    while (!cont)
+                    {
+                        Console.Write("- (yes/no): ");
+                        string ret = Console.ReadLine();
+                        cont = true;
+                        if (ret.StartsWith("y", true, System.Globalization.CultureInfo.CurrentCulture))
+                        {
+                            Console.WriteLine("- Deleting backups...");
+                            File.Delete(backupFile + ".png");
+                            File.Delete(backupFile + ".xml");
+                            cleanInstall = true;
+                        }
+                        else if (!ret.StartsWith("n", true, System.Globalization.CultureInfo.CurrentCulture))
+                        {
+                            Console.WriteLine("- Not a valid input.");
+                            cont = false;
+                        }
+                    }
+                }
 
                 if (!File.Exists(backupFile + ".png"))
                 {
@@ -215,6 +185,8 @@ namespace ResourcePatcher
                         baseImage.Save(originalFile + ".png");
                         xml.Save(originalFile + ".xml");
                         Console.WriteLine("- Patched " + spritesPatched + " out of " + spritesTotal + " sprites.");
+                        CreateMD5File(originalFile + ".png");
+                        CreateMD5File(originalFile + ".xml");
                         g.Dispose();
                     } else Console.WriteLine("- There was a problem drawing to this atlas.");
                     baseImage.Dispose();
@@ -222,6 +194,7 @@ namespace ResourcePatcher
 			}
             Console.WriteLine("Done. Press any key.");
 		}
+
         /// <summary>
         /// Insert new elements into XML files.
         /// </summary>
@@ -229,6 +202,12 @@ namespace ResourcePatcher
         {
             Console.Clear();
             DrawTitle();
+            if (!Directory.Exists(Path.Combine("patchfiles", "xml")))
+            {
+                Console.WriteLine("There's no XML files to be patched.");
+                return;
+            }
+
             foreach (var patchFile in Directory.GetFiles(Path.Combine("patchfiles", "xml"), "*.xml", SearchOption.AllDirectories))
             {
                 var xmlName = Path.GetFileName(patchFile);
@@ -249,6 +228,32 @@ namespace ResourcePatcher
 
                 var backupFile = Path.Combine("Original", "Content", "Atlas", xmlName);
                 CheckForBackupDirectory(2);
+
+                if (CheckForUpdate(originalFile))
+                {
+                    Console.WriteLine("- The XML has been modified outside of the patcher.");
+                    Console.WriteLine("- This usually means there was an update for TFA.");
+                    Console.WriteLine("- Reset the XML file and reinstall all elements?");
+                    Console.WriteLine("- Not doing this might result in TFA crashing.");
+                    bool cont = false;
+                    while (!cont)
+                    {
+                        Console.Write("- (yes/no): ");
+                        string ret = Console.ReadLine();
+                        cont = true;
+                        if (ret.StartsWith("y", true, System.Globalization.CultureInfo.CurrentCulture))
+                        {
+                            Console.WriteLine("- Deleting backup...");
+                            File.Delete(backupFile);
+                            cleanInstall = true;
+                        }
+                        else if (!ret.StartsWith("n", true, System.Globalization.CultureInfo.CurrentCulture))
+                        {
+                            Console.WriteLine("- Not a valid input.");
+                            cont = false;
+                        }
+                    }
+                }
 
                 if (!File.Exists(backupFile))
                 {
@@ -289,15 +294,55 @@ namespace ResourcePatcher
 
                 xml.Save(originalFile);
                 Console.WriteLine("- Added " + patchxml.Elements().Count() + " XML elements.");
+                CreateMD5File(originalFile);
             }
             Console.WriteLine("Done. Press any key.");
+        }
+
+        public static void ResetAll()
+        {
+            Console.Clear();
+            DrawTitle();
+            Console.WriteLine("This will reset all files to their original state");
+            Console.WriteLine("and remove all backups. Use this function when a");
+            Console.WriteLine("update messed up and you can't fix it with a clean");
+            Console.WriteLine("install. All modifications to the game files, both");
+            Console.WriteLine("from this patcher and external programs, are lost.");
+            Console.WriteLine("Continue?");
+            bool cont = false;
+            while (!cont)
+            {
+                Console.Write("- (yes/no): ");
+                string ret = Console.ReadLine();
+                cont = true;
+                if (ret.StartsWith("n", true, System.Globalization.CultureInfo.CurrentCulture))
+                {
+                    Console.WriteLine("Stopped. Press any key.");
+                    return;
+                }
+                else if (!ret.StartsWith("y", true, System.Globalization.CultureInfo.CurrentCulture))
+                {
+                    Console.WriteLine("Not a valid input.");
+                    cont = false;
+                }
+            }
+            Console.WriteLine("");
+            Console.WriteLine("Removing all backups...");
+            Directory.Delete("Original", true);
+            Console.WriteLine("Telling Steam to validate files...");
+            Process.Start("steam://validate/251470");
+            Console.WriteLine("");
+            Console.WriteLine("Steam is now reacquiring the original game files.");
+            Console.WriteLine("Please wait until it's finished before patching.");
+            Console.WriteLine("Press any key.");
         }
 
 		public static int Main (string[] args)
         {
             int selector = 0;
             bool good = false;
-            while (selector != 5) {
+
+            while (selector != 6) {
                 Console.Clear();
                 DrawTitle();
                 Console.WriteLine("Choose an option. Enter a number and hit Enter:");
@@ -305,8 +350,9 @@ namespace ResourcePatcher
                 Console.WriteLine("  2) Reinstall all textures (clean install)");
                 Console.WriteLine("  3) Add/replace XML elements");
                 Console.WriteLine("  4) Reinstall XML elements (clean install)");
-                Console.WriteLine("  5) Exit");
-                Console.Write(":: ");
+                Console.WriteLine("  5) Reset all game files");
+                Console.WriteLine("  6) Exit");
+                Console.Write("(1-6): ");
                 good = int.TryParse(Console.ReadLine(), out selector);
                 if (good)
                 {
@@ -325,6 +371,9 @@ namespace ResourcePatcher
                             PatchXML(true);
                             break;
                         case 5:
+                            ResetAll();
+                            break;
+                        case 6:
                             return 0;
                         default:
                             Console.WriteLine("Invalid choice. Press any key.");
@@ -338,7 +387,7 @@ namespace ResourcePatcher
 
         private static void DrawTitle()
         {
-            Console.WriteLine("+++ TOWERFALL ASCENSION RESOURCE PATCHER v0.2 +++");
+            Console.WriteLine("+++ TOWERFALL ASCENSION RESOURCE PATCHER v0.3 +++");
             Console.WriteLine("-------------------------------------------------");
             Console.WriteLine("");
         }
@@ -360,6 +409,33 @@ namespace ResourcePatcher
                     break;
             }
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        }
+
+        private static bool CheckForUpdate(string file)
+        {
+            if (!File.Exists(file + ".md5")) return false;
+            using (var md5 = MD5.Create())
+            {
+                using (var stream = File.OpenRead(file))
+                {
+                    string hash = System.Text.Encoding.UTF8.GetString(md5.ComputeHash(stream));
+                    string comp = System.IO.File.ReadAllText(file + ".md5");
+                    if (comp == hash) return false;
+                    else return true;
+                }
+            }
+        }
+
+        private static void CreateMD5File(string file)
+        {
+            using (var md5 = MD5.Create())
+            {
+                using (var stream = File.OpenRead(file))
+                {
+                    string hash = System.Text.Encoding.UTF8.GetString(md5.ComputeHash(stream));
+                    System.IO.File.WriteAllText(file + ".md5", hash);
+                }
+            }
         }
 	}
 }
